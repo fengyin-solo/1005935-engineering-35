@@ -24,6 +24,19 @@
       </span>
     </p>
 
+    <section class="review-panel">
+      <h3 class="review-panel-title">待复核清单：消防器材压力越限（与消防设施台账同一份规则，共 {{ reviewItems.length }} 条）</h3>
+      <ul v-if="reviewItems.length" class="review-list">
+        <li v-for="item in reviewItems" :key="item.id" class="review-item">
+          <strong>{{ item.code }}</strong>
+          <span>{{ item.type }} · {{ item.location }}</span>
+          <span v-for="issue in item.issues" :key="issue.type" class="rule-tag" :class="`rule-tag-${issue.type}`">{{ issue.label }}</span>
+          <span class="muted-text">读数 {{ item.pressure === null ? '缺失' : `${item.pressure.toFixed(2)}MPa` }}，检查日期 {{ item.checkedOn }}</span>
+        </li>
+      </ul>
+      <p v-else class="muted-text">暂无压力越限器材，无需复核。</p>
+    </section>
+
     <form class="filter-bar" @submit.prevent="reload">
       <label v-for="field in filterFields" :key="field" class="filter-item">
         <span>{{ field }}</span>
@@ -76,10 +89,12 @@ import { computed, onMounted, ref } from 'vue'
 import {
   downloadEntries,
   listEntries,
+  listFireReviewItems,
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
 import type { EntryRow } from '@/data/types'
+import type { FireReviewItem } from '@/data/fire-rules'
 
 const meta = moduleMeta('patrol')
 const columns = ["巡视单号", "巡视路线", "巡视人员", "巡视日期", "检查项数", "异常项数", "巡视时长", "巡视状态"]
@@ -90,6 +105,7 @@ const stats = [{"label": "今日巡视单", "value": 0}, {"label": "巡视中记
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
+const reviewItems = ref<FireReviewItem[]>([])
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
 const statusSummary = computed(() =>
@@ -125,6 +141,8 @@ function runAction(action: string, row: EntryRow) {
 function reload() {
   errorMessage.value = ''
   try {
+    // 待复核清单直接复用消防设施台账的共享规则结论，两处压力不足器材数必然一致。
+    reviewItems.value = listFireReviewItems()
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total

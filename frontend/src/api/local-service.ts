@@ -1,6 +1,13 @@
 import { MODULE_BY_KEY } from '@/data/modules'
+import {
+  FIRE_MODULE_KEY,
+  summarizeFireRows,
+  mergeFireRows,
+} from '@/data/fire-rules'
+import { FIRE_SAMPLE_BATCH } from '@/data/seed'
 import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
+import type { FireLedgerSummary, FireReviewItem, FireStats } from '@/data/fire-rules'
 
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
 const NEGATIVE_ACTIONS = ['撤销', '作废', '拒绝', '驳回', '停用', '忽略', '下线', '回滚']
@@ -53,7 +60,40 @@ export function runAction(key: string, id: number, action: string): ActionResult
   const next = [...rows]
   next[index] = updated
   saveRows(key, next)
+  if (key === FIRE_MODULE_KEY) {
+    // 消防器材的最终状态由共享规则说了算：动作只表达意图，压力越限/超期仍按读数与周期判定。
+    const derived = listRows(key)[index]
+    return { ok: true, message: `${meta.entity}已${action}，按共享规则当前状态「${derived.status}」` }
+  }
   return { ok: true, message: `${meta.entity}已${action}，当前状态「${target}」` }
+}
+
+// ---------- 消防器材：台账统计与巡视待复核清单共用同一份规则结论 ----------
+
+export function getFireLedger(): FireLedgerSummary {
+  return summarizeFireRows(listRows(FIRE_MODULE_KEY))
+}
+
+export function getFireStats(): FireStats {
+  return getFireLedger().stats
+}
+
+/** 巡视检查的待复核清单：压力越限（欠压/超压）的消防器材都要现场复核。 */
+export function listFireReviewItems(): FireReviewItem[] {
+  return getFireLedger().review
+}
+
+/** 导入样例批次：按器材编号幂等合并，同一批器材重复导入不会多出一份。 */
+export function importFireSamples(): ActionResult & { added: number; updated: number } {
+  const { rows, added, updated } = mergeFireRows(listRows(FIRE_MODULE_KEY), FIRE_SAMPLE_BATCH)
+  saveRows(FIRE_MODULE_KEY, rows)
+  const faulty = summarizeFireRows(rows).stats.pressureFaulty
+  return {
+    ok: true,
+    added,
+    updated,
+    message: `样例导入完成：新增 ${added} 条、更新 ${updated} 条，压力不足器材 ${faulty} 条（含欠压与超压）`,
+  }
 }
 
 export function resetModule(key: string): PageResult {

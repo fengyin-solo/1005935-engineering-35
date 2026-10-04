@@ -7,6 +7,7 @@
       </div>
       <div class="page-actions">
         <button class="btn primary" type="button" @click="openCreate">登记消防器材</button>
+        <button class="btn" type="button" @click="importSamples">导入样例</button>
         <button class="btn" type="button" @click="exportRows">导出消防设施清单</button>
       </div>
     </header>
@@ -23,6 +24,17 @@
         {{ item.status }}：{{ item.count }}
       </span>
     </p>
+
+    <section v-if="findingRows.length" class="rule-alerts">
+      <h3 class="rule-alerts-title">共享规则判定结论（与构建前自检同源）</h3>
+      <ul class="rule-alert-list">
+        <li v-for="item in findingRows" :key="`${item.id}-${item.issue.type}`" class="rule-alert-item">
+          <strong>{{ item.code }}</strong>
+          <span class="rule-tag" :class="`rule-tag-${item.issue.type}`">{{ item.issue.label }}</span>
+          <span>{{ item.issue.detail }}</span>
+        </li>
+      </ul>
+    </section>
 
     <form class="filter-bar" @submit.prevent="reload">
       <label v-for="field in filterFields" :key="field" class="filter-item">
@@ -65,6 +77,7 @@
 
     <footer class="page-foot">
       <span>共 {{ total }} 条消防设施记录</span>
+      <span v-if="noticeMessage" class="notice-text">{{ noticeMessage }}</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
   </section>
@@ -75,21 +88,30 @@ import { computed, onMounted, ref } from 'vue'
 
 import {
   downloadEntries,
+  getFireLedger,
+  importFireSamples,
   listEntries,
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
 import type { EntryRow } from '@/data/types'
+import type { FireFinding } from '@/data/fire-rules'
 
 const meta = moduleMeta('fire')
 const columns = ["器材编号", "器材类型", "布置位置", "检查周期", "压力读数", "检查人员", "检查日期", "器材状态"]
 const actions = ["登记检查", "申请充装", "确认更换"]
 const statuses = ["检查合格", "待检查", "压力不足", "已更换"]
-const stats = [{"label": "在册消防器材", "value": 0}, {"label": "待检查器材", "value": 0}, {"label": "压力不足器材", "value": 0}]
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
+const noticeMessage = ref('')
+const stats = ref([
+  { label: "在册消防器材", value: 0 },
+  { label: "待检查器材", value: 0 },
+  { label: "压力不足器材", value: 0 },
+])
+const findingRows = ref<{ id: number; code: string; issue: FireFinding }[]>([])
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
 const statusSummary = computed(() =>
@@ -112,6 +134,13 @@ function openCreate() {
   errorMessage.value = '消防器材登记入口尚未接入审批流'
 }
 
+function importSamples() {
+  errorMessage.value = ''
+  const result = importFireSamples()
+  noticeMessage.value = result.message
+  reload()
+}
+
 function runAction(action: string, row: EntryRow) {
   errorMessage.value = ''
   const result = applyAction(meta.key, Number(row.id), action)
@@ -119,12 +148,23 @@ function runAction(action: string, row: EntryRow) {
     errorMessage.value = result.message
     return
   }
+  noticeMessage.value = result.message
   reload()
 }
 
 function reload() {
   errorMessage.value = ''
   try {
+    // 统计与越限/超期结论统一来自本地数据层的共享规则，页面不再自己判一遍。
+    const ledger = getFireLedger()
+    stats.value = [
+      { label: "在册消防器材", value: ledger.stats.total },
+      { label: "待检查器材", value: ledger.stats.due },
+      { label: "压力不足器材", value: ledger.stats.pressureFaulty },
+    ]
+    findingRows.value = ledger.findings.flatMap((item) =>
+      item.issues.map((issue) => ({ id: item.id, code: item.code, issue })),
+    )
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
