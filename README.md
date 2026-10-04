@@ -14,7 +14,8 @@
 ├── frontend/                 Vue 3 + Vite + TypeScript 前端（唯一运行单元）
 │   ├── src/views/            每个业务模块一个页面
 │   ├── src/api/local-service.ts   本地数据服务：列表、筛选、动作流转、导出
-│   ├── src/data/             模块元数据 / 示例数据 / localStorage 持久化
+│   ├── src/data/             模块元数据 / 示例数据 / localStorage 持久化 / 消防器材共享规则
+│   ├── scripts/selfcheck.mjs 构建前自检：消防器材规则喂样例数据，越限与超期各报各的
 │   ├── src/stores/           会话与筛选状态
 │   └── vite.config.ts        dev server 配置（open: false，无 /api 代理）
 ├── .gitignore
@@ -37,6 +38,29 @@ npm run dev
 cd frontend
 npm run build
 ```
+
+构建会先自动执行 `prebuild` 自检（也可单独运行 `npm run selfcheck` / `make selfcheck`）：
+自检把示例数据喂给共享规则，压力越限与检查超期分桶报告，并校验存量种子一致性与样例导入幂等性；
+任一项失败即以非零码退出，构建被阻断——**自检不过不允许上线**。自检不依赖浏览器、时区固定
+（UTC 解析、基准日固定），本地开发机与容器里跑出的结论一致。
+
+## 消防器材规则（共享实现）
+
+消防器材的「压力读数是否越限」与「检查周期是否超期」只有一份实现，位于
+`frontend/src/data/fire-rules.ts`：
+
+- 页面（`views/fire`、`views/patrol` 的待复核清单）、台账服务（`api/local-service.ts`）、
+  构建前自检（`scripts/selfcheck.mjs`）三处同走这一份，页面里不做任何业务判定。
+- 压力绿区 **1.0–1.6 MPa**（含边界）：低于下限为欠压、高于上限为超压，统一归入「压力不足」状态；
+  自检报告里欠压、超压与超期各报各的。
+- 检查周期可写成 `30天 / 每月 / 1月 / 季度 / 半年 / 年度` 等，统一换算天数；
+  `检查日期 + 周期 < 基准日` 即超期（已更换器材不判定）。一件器材可同时越限且超期。
+- 存量记录兼容：`压力读数`、`检查周期` 是占位文本时，首次读存储会按检查日期确定性回填
+  （幂等），登记为压力不足的回填欠压值 0.8 MPa，合格记录按季度周期、其余按月度回填。
+- 巡视检查页的「待复核清单」直接消费共享规则，其中的压力不足器材数与消防设施页统计卡
+  始终一致。
+- 消防设施页「导入样例」按钮导入 `seed.ts` 里的 `FIRE_SAMPLE_BATCH`，按器材编号去重，
+  同一批重复导入不会多出一份。
 
 ## 业务模块
 
@@ -68,4 +92,6 @@ npm run build
 - 字段、状态、动作与流转目标集中在 `frontend/src/data/modules.ts`；示例数据在
   `frontend/src/data/seed.ts`。
 - 状态流转只允许在 `local-service.ts` 里改，页面组件不做业务判断。
+- 消防器材的压力越限与检查超期规则只允许写在 `src/data/fire-rules.ts`，改阈值或判定逻辑
+  只动这一处，随后跑 `npm run selfcheck` 验证。
 - 想回到初始数据：清掉浏览器里 `pv-plant-ops:entries` 这一项，或调用 `resetModule(模块)`。

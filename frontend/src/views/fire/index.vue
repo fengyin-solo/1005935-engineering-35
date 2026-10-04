@@ -7,6 +7,7 @@
       </div>
       <div class="page-actions">
         <button class="btn primary" type="button" @click="openCreate">登记消防器材</button>
+        <button class="btn" type="button" @click="importSamples">导入样例</button>
         <button class="btn" type="button" @click="exportRows">导出消防设施清单</button>
       </div>
     </header>
@@ -75,6 +76,8 @@ import { computed, onMounted, ref } from 'vue'
 
 import {
   downloadEntries,
+  fireStats,
+  importFireSamples,
   listEntries,
   moduleMeta,
   runAction as applyAction,
@@ -85,7 +88,6 @@ const meta = moduleMeta('fire')
 const columns = ["器材编号", "器材类型", "布置位置", "检查周期", "压力读数", "检查人员", "检查日期", "器材状态"]
 const actions = ["登记检查", "申请充装", "确认更换"]
 const statuses = ["检查合格", "待检查", "压力不足", "已更换"]
-const stats = [{"label": "在册消防器材", "value": 0}, {"label": "待检查器材", "value": 0}, {"label": "压力不足器材", "value": 0}]
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
@@ -98,6 +100,15 @@ const statusSummary = computed(() =>
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+// 三张统计卡全部取共享规则结论：压力越限与超期判定不在本页面实现。
+const stats = computed(() => {
+  const summary = fireStats()
+  return [
+    { label: meta.metrics[0] ?? '在册消防器材', value: summary.total },
+    { label: meta.metrics[1] ?? '待检查器材', value: summary.pendingCheck },
+    { label: meta.metrics[2] ?? '压力不足器材', value: summary.pressureInsufficient },
+  ]
+})
 
 function resetFilters() {
   filters.value = {}
@@ -110,6 +121,19 @@ function exportRows() {
 
 function openCreate() {
   errorMessage.value = '消防器材登记入口尚未接入审批流'
+}
+
+function importSamples() {
+  errorMessage.value = ''
+  try {
+    const result = importFireSamples()
+    if (result.added === 0) {
+      errorMessage.value = `样例批次已在台账中，跳过 ${result.skipped} 条，未新增记录`
+    }
+    reload()
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '消防器材样例导入失败'
+  }
 }
 
 function runAction(action: string, row: EntryRow) {

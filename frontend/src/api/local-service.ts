@@ -1,5 +1,22 @@
 import { MODULE_BY_KEY } from '@/data/modules'
-import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
+import {
+  FIRE_MODULE_KEY,
+  FIRE_STATUS_REPLACED,
+  buildFireReviewQueue,
+  reconcileFireRow,
+  summarizeFireRows,
+  type FireReviewItem,
+  type FireSummary,
+} from '@/data/fire-rules'
+import {
+  allRows,
+  importRows,
+  listRows,
+  resetRows,
+  saveRows,
+  type ImportResult,
+} from '@/data/local-store'
+import { FIRE_SAMPLE_BATCH } from '@/data/seed'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
 
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
@@ -13,6 +30,14 @@ export function moduleMeta(key: string): ModuleMeta {
   return meta
 }
 
+// 消防器材读出来一律按共享规则对齐：页面、台账、导出看到的状态始终与规则一致。
+function presentRows(key: string, rows: EntryRow[]): EntryRow[] {
+  if (key !== FIRE_MODULE_KEY) {
+    return rows
+  }
+  return rows.map((row) => reconcileFireRow(row))
+}
+
 export function filterRows(rows: EntryRow[], filters: Record<string, string>): EntryRow[] {
   const pairs = Object.entries(filters).filter(([, value]) => value.trim() !== '')
   if (pairs.length === 0) {
@@ -24,7 +49,7 @@ export function filterRows(rows: EntryRow[], filters: Record<string, string>): E
 }
 
 export function listEntries(key: string, filters: Record<string, string> = {}): PageResult {
-  const matched = filterRows(listRows(key), filters)
+  const matched = filterRows(presentRows(key, listRows(key)), filters)
   return { items: matched, total: matched.length, page: 1, size: matched.length }
 }
 
@@ -44,16 +69,21 @@ export function runAction(key: string, id: number, action: string): ActionResult
     return { ok: false, message: `${meta.entity}已经是「${target}」，不用重复操作` }
   }
   const lastStatus = meta.statuses[meta.statuses.length - 1]
-  const updated: EntryRow = {
+  let updated: EntryRow = {
     ...rows[index],
     status: target,
     pending: target !== lastStatus,
     abnormal: NEGATIVE_ACTIONS.some((verb) => action.startsWith(verb)),
   }
+  if (key === FIRE_MODULE_KEY) {
+    // 消防器材的最终状态以压力与周期规则为准：例如「申请充装」时读数已经正常，
+    // 状态会落回检查合格，而不是强行挂「压力不足」。
+    updated = reconcileFireRow(updated)
+  }
   const next = [...rows]
   next[index] = updated
   saveRows(key, next)
-  return { ok: true, message: `${meta.entity}已${action}，当前状态「${target}」` }
+  return { ok: true, message: `${meta.entity}已${action}，当前状态「${updated.status}」` }
 }
 
 export function resetModule(key: string): PageResult {
@@ -65,10 +95,10 @@ export function exportEntries(key: string): { filename: string; content: string 
   const meta = moduleMeta(key)
   const header = ['编号', ...meta.fields, '当前状态']
   const lines = [header.join(',')]
-  for (const row of listRows(key)) {
+  for (const row of presentRows(key, listRows(key))) {
     lines.push([row.id, ...meta.fields.map((field) => row[field] ?? ''), row.status].join(','))
   }
-  return { filename: `${meta.name}-清单.csv`, content: `\uFEFF${lines.join('\n')}` }
+  return { filename: `${meta.name}-清单.csv`, content: '﻿' + lines.join('\n') }
 }
 
 export function downloadEntries(key: string): void {
@@ -84,10 +114,25 @@ export function downloadEntries(key: string): void {
   URL.revokeObjectURL(url)
 }
 
+// 消防台账的三张统计卡：数字全部来自共享规则。
+export function fireStats(): FireSummary {
+  return summarizeFireRows(listRows(FIRE_MODULE_KEY))
+}
+
+// 巡视检查的待复核清单：消防器材越限/超期都进这张单子，数量与消防页同源。
+export function fireReviewQueue(): FireReviewItem[] {
+  return buildFireReviewQueue(listRows(FIRE_MODULE_KEY))
+}
+
+// 导入消防器材样例批次：同一批重复导入按器材编号去重，不会多出一份。
+export function importFireSamples(): ImportResult {
+  return importRows(FIRE_MODULE_KEY, FIRE_SAMPLE_BATCH)
+}
+
 export function loadOverview(): OverviewResult {
   const rows = allRows()
   const modules = [...MODULE_BY_KEY.values()].map((meta) => {
-    const entries = rows[meta.key] ?? []
+    const entries = presentRows(meta.key, rows[meta.key] ?? [])
     return {
       name: meta.name,
       created: entries.length,
@@ -103,3 +148,5 @@ export function loadOverview(): OverviewResult {
   ]
   return { cards, modules }
 }
+
+export { FIRE_STATUS_REPLACED }

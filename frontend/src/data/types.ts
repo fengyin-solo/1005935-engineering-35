@@ -18,6 +18,8 @@ export type ModuleMeta = {
   actions: string[]
   actionTargets: Record<string, string>
   metrics: string[]
+  // 业务编号字段：样例导入时按它去重，配了才允许导入。
+  identityField?: string
 }
 
 export type PageResult = {

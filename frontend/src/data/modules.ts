@@ -166,6 +166,7 @@ export const MODULES: ModuleMeta[] = [
     actions: ["登记检查", "申请充装", "确认更换"],
     actionTargets: {"登记检查": "检查合格", "申请充装": "压力不足", "确认更换": "已更换"},
     metrics: ["在册消防器材", "待检查器材", "压力不足器材"],
+    identityField: "器材编号",
   },
   {
     key: "settlement",
